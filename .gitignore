@@ -1,0 +1,74 @@
+# ============================================================
+# AWS credentials & secrets — never commit these
+# ============================================================
+.env
+.env.*
+.env.local
+.env.*.local
+credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*secret*
+*password*
+*passwd*
+*token*
+*apikey*
+*api_key*
+aws-exports.js
+
+# ============================================================
+# Terraform
+# ============================================================
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# ============================================================
+# AWS SAM
+# ============================================================
+.aws-sam/
+samconfig.toml
+
+# ============================================================
+# Python
+# ============================================================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# ============================================================
+# Node.js
+# ============================================================
+node_modules/
+npm-debug.log*
+yarn-error.log
+.npm
+
+# ============================================================
+# macOS
+# ============================================================
+.DS_Store
+.AppleDouble
+.LSOverride

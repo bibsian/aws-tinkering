@@ -1,0 +1,31 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Description: Python serverless starter — Lambda + API Gateway
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 10
+
+Resources:
+  HelloFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handler.lambda_handler
+      CodeUri: .
+      Description: Simple hello-world Lambda
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Path: /hello
+            Method: GET
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/hello"
+  HelloFunctionArn:
+    Description: Lambda function ARN
+    Value: !GetAtt HelloFunction.Arn
