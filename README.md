@@ -1,6 +1,6 @@
-# aws_learn
+# AWS Tinker
 
-Learning repo for AWS using Pluralsight cloud sandboxes.
+Tinkering repo for AWS using Pluralsight cloud sandboxes.
 
 ## Prerequisites
 
