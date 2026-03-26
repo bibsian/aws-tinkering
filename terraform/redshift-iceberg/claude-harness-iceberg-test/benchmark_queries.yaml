@@ -1,0 +1,202 @@
+# benchmark_queries.yaml
+# ---------------------------------------------------------------
+# All queries run against BOTH storage patterns.
+# {table} is substituted by query_runner.py:
+#   union_view → benchmark.prop_snapshot_v
+#   iceberg    → benchmark_iceberg.prop_snapshot_iceberg
+#
+# Schema:
+#   prop_cd       VARCHAR(20)   — 8,000 distinct values, sort key
+#   snapshot_date DATE          — partition key
+#   extract_date  DATE          — ETL load date, sort key
+# ---------------------------------------------------------------
+
+queries:
+
+  # ── Full scans ──────────────────────────────────────────────────────────────
+  # Worst case for both patterns: no predicate to prune on.
+  # Tests raw throughput and UNION ALL planning overhead.
+
+  - id: full_count
+    label: "Full table count"
+    query_type: full_scan
+    sql: |
+      SELECT COUNT(*) AS total_rows
+      FROM {table};
+
+  - id: full_distinct_props
+    label: "Distinct prop_cds (full scan)"
+    query_type: full_scan
+    sql: |
+      SELECT COUNT(DISTINCT prop_cd) AS distinct_props
+      FROM {table};
+
+  - id: full_extract_lag
+    label: "Average extract lag (full scan)"
+    query_type: full_scan
+    sql: |
+      SELECT
+          AVG(DATEDIFF('day', snapshot_date, extract_date)) AS avg_lag_days,
+          MAX(DATEDIFF('day', snapshot_date, extract_date)) AS max_lag_days
+      FROM {table};
+
+
+  # ── Single-property lookups ─────────────────────────────────────────────────
+  # Most selective filter possible. Tests sort-key effectiveness:
+  # with COMPOUND SORTKEY(prop_cd, ...) Redshift should skip most blocks.
+  # Iceberg tests metadata-level prop_cd filtering.
+
+  - id: prop_point_lookup
+    label: "Single prop_cd — all snapshots"
+    query_type: point_lookup
+    sql: |
+      SELECT snapshot_date, extract_date
+      FROM {table}
+      WHERE prop_cd = 'P000001'
+      ORDER BY snapshot_date;
+
+  - id: prop_date_range
+    label: "Single prop_cd — date range"
+    query_type: point_lookup
+    sql: |
+      SELECT snapshot_date, extract_date
+      FROM {table}
+      WHERE prop_cd = 'P000001'
+        AND snapshot_date BETWEEN '2024-01-01' AND '2024-01-14'
+      ORDER BY snapshot_date;
+
+
+  # ── Partition-range scans ───────────────────────────────────────────────────
+  # The key battleground. The union-view pattern can skip entire
+  # partition tables when the planner detects a snapshot_date range;
+  # Iceberg prunes via its partition_month manifest. Compare carefully.
+
+  - id: single_month_count
+    label: "Single month — row count"
+    query_type: partition_scan
+    sql: |
+      SELECT COUNT(*) AS rows
+      FROM {table}
+      WHERE snapshot_date BETWEEN '2024-01-01' AND '2024-01-31';
+
+  - id: single_month_distinct_props
+    label: "Single month — distinct props"
+    query_type: partition_scan
+    sql: |
+      SELECT COUNT(DISTINCT prop_cd) AS distinct_props
+      FROM {table}
+      WHERE snapshot_date BETWEEN '2024-01-01' AND '2024-01-31';
+
+  - id: cross_month_range
+    label: "Multi-month range scan"
+    query_type: partition_scan
+    sql: |
+      SELECT
+          snapshot_date,
+          COUNT(*)                   AS daily_rows,
+          COUNT(DISTINCT prop_cd)    AS distinct_props
+      FROM {table}
+      WHERE snapshot_date BETWEEN '2024-01-01' AND '2024-02-28'
+      GROUP BY snapshot_date
+      ORDER BY snapshot_date;
+
+
+  # ── Aggregations ────────────────────────────────────────────────────────────
+  # Tests grouping, spill-to-disk behaviour, and hash aggregate performance.
+
+  - id: agg_props_per_day
+    label: "Props per snapshot day"
+    query_type: aggregation
+    sql: |
+      SELECT
+          snapshot_date,
+          COUNT(*)                AS row_count,
+          COUNT(DISTINCT prop_cd) AS distinct_props
+      FROM {table}
+      GROUP BY snapshot_date
+      ORDER BY snapshot_date;
+
+  - id: agg_extract_lag_by_month
+    label: "Extract lag stats by month"
+    query_type: aggregation
+    sql: |
+      SELECT
+          DATE_TRUNC('month', snapshot_date)           AS snapshot_month,
+          AVG(DATEDIFF('day', snapshot_date, extract_date)) AS avg_lag,
+          MAX(DATEDIFF('day', snapshot_date, extract_date)) AS max_lag,
+          SUM(CASE WHEN extract_date > snapshot_date THEN 1 ELSE 0 END) AS late_extracts
+      FROM {table}
+      GROUP BY 1
+      ORDER BY 1;
+
+  - id: agg_prop_snapshot_counts
+    label: "Snapshot count per prop_cd"
+    query_type: aggregation
+    sql: |
+      SELECT
+          prop_cd,
+          COUNT(DISTINCT snapshot_date) AS snapshot_days,
+          MIN(snapshot_date)            AS first_snapshot,
+          MAX(snapshot_date)            AS last_snapshot
+      FROM {table}
+      GROUP BY prop_cd
+      ORDER BY snapshot_days DESC
+      LIMIT 100;
+
+
+  # ── Window functions ────────────────────────────────────────────────────────
+  # Tests sort + merge operations and spill behaviour on large windows.
+
+  - id: window_row_number_per_prop
+    label: "Row number within prop_cd"
+    query_type: window_function
+    sql: |
+      SELECT
+          prop_cd,
+          snapshot_date,
+          extract_date,
+          ROW_NUMBER() OVER (
+              PARTITION BY prop_cd
+              ORDER BY snapshot_date, extract_date
+          ) AS rn
+      FROM {table}
+      WHERE snapshot_date BETWEEN '2024-01-01' AND '2024-01-07'
+      ORDER BY prop_cd, snapshot_date
+      LIMIT 500;
+
+  - id: window_latest_extract_per_snapshot
+    label: "Latest extract per prop + snapshot"
+    query_type: window_function
+    sql: |
+      SELECT *
+      FROM (
+          SELECT
+              prop_cd,
+              snapshot_date,
+              extract_date,
+              ROW_NUMBER() OVER (
+                  PARTITION BY prop_cd, snapshot_date
+                  ORDER BY extract_date DESC
+              ) AS rn
+          FROM {table}
+      )
+      WHERE rn = 1
+      ORDER BY prop_cd, snapshot_date
+      LIMIT 1000;
+
+  - id: window_running_snapshot_count
+    label: "Running snapshot count per prop_cd"
+    query_type: window_function
+    sql: |
+      SELECT
+          prop_cd,
+          snapshot_date,
+          COUNT(*) OVER (
+              PARTITION BY prop_cd
+              ORDER BY snapshot_date
+              ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+          ) AS cumulative_rows
+      FROM {table}
+      WHERE snapshot_date BETWEEN '2024-01-01' AND '2024-01-07'
+        AND prop_cd IN ('P000001', 'P000002', 'P000003', 'P000004', 'P000005')
+      ORDER BY prop_cd, snapshot_date;

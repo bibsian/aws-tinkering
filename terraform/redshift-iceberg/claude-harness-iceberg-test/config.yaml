@@ -1,0 +1,44 @@
+redshift:
+  host: "your-cluster.redshift.amazonaws.com"
+  port: 5439
+  database: "dev"
+  user: "awsuser"
+  password: "${RS_PASSWORD}"          # set via env var; never hardcode
+  schema: "benchmark"
+
+aws:
+  region: "us-east-1"
+  s3_bucket: "your-sandbox-bucket"
+  s3_prefix: "benchmark/iceberg"
+  glue_database: "benchmark_db"      # Glue catalog DB for Iceberg
+  iam_role_arn: "arn:aws:iam::123456789012:role/RedshiftSpectrumRole"
+
+data:
+  # Property dimension
+  num_prop_cds: 8000                  # total distinct prop_cd values (8000 levels)
+  records_per_prop_cd_per_day: 1000  # rows generated per prop_cd per snapshot day
+                                     # → 8M rows/day at full scale
+
+  # Date range for simulated snapshots (snapshot_date partition key)
+  # Each calendar month becomes one union-view partition table.
+  # Reduce date_range_days for sandbox testing before scaling to months.
+  snapshot_start_date: "2024-01-01"
+  date_range_days: 7                 # 7 days ≈ 56M rows at full scale; reduce for dev
+
+  # extract_date lags snapshot_date by 0-3 days (simulates ETL latency)
+  extract_lag_days_max: 3
+
+  seed: 42                            # reproducible Faker seed
+
+benchmark:
+  iterations: 5                       # runs per query (for avg/p95)
+  warm_cache_runs: 1                  # discarded warm-up runs before timing
+  query_timeout_seconds: 120
+  # Scale presets: override num_prop_cds + date_range_days at runtime
+  # small:  num_prop_cds=100,  date_range_days=3  → ~300K rows
+  # medium: num_prop_cds=1000, date_range_days=7  → ~7M rows
+  # full:   num_prop_cds=8000, date_range_days=30 → ~240M rows
+
+output:
+  results_dir: "./results"
+  formats: ["csv", "html"]
